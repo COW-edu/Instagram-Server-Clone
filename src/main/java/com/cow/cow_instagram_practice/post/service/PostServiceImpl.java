@@ -1,0 +1,133 @@
+package com.cow.cow_instagram_practice.post.service;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Slice;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.cow.cow_instagram_practice.follow.entity.Follow;
+import com.cow.cow_instagram_practice.follow.repository.FollowRepository;
+import com.cow.cow_instagram_practice.image.entity.PostImage;
+import com.cow.cow_instagram_practice.member.entity.Member;
+import com.cow.cow_instagram_practice.post.controller.dto.request.PostRequest;
+import com.cow.cow_instagram_practice.post.controller.dto.request.UpdatePostRequest;
+import com.cow.cow_instagram_practice.post.controller.dto.response.PostResponse;
+import com.cow.cow_instagram_practice.post.entity.Post;
+import com.cow.cow_instagram_practice.post.repository.PostRepository;
+
+import jakarta.persistence.EntityNotFoundException;
+import lombok.RequiredArgsConstructor;
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class PostServiceImpl implements PostService {
+	private static final int DEFAULT_PAGE__SIZE = 2;
+
+	private final PostRepository postRepository;
+	private final FollowRepository followRepository;
+
+	@Override
+	public ResponseEntity<PostResponse> create(Member member, PostRequest postRequest, PostImage postImage) {
+		Post post = postRequest.toEntity(LocalDateTime.now(), postImage, member);
+		Post savedPost = postRepository.save(post);
+		return ResponseEntity.status(HttpStatus.CREATED)
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(PostResponse.from(savedPost));
+	}
+
+	@Override
+	public Post findOne(Long postId) {
+		return postRepository.findByIdJoinFetch(postId)
+			.orElseThrow(() -> new EntityNotFoundException("[Error] 게시글을 찾을 수 없습니다."));
+	}
+
+	@Override
+	public ResponseEntity<List<PostResponse>> findAll(Long cursor) {
+		PageRequest pageRequest = PageRequest.of(0, DEFAULT_PAGE__SIZE);
+		Slice<Post> posts = getAllPosts(pageRequest, cursor);
+		List<PostResponse> responses = posts.stream()
+			.map(PostResponse::from)
+			.toList();
+		return ResponseEntity.status(HttpStatus.OK)
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(responses);
+	}
+
+	@Override
+	public ResponseEntity<List<PostResponse>> findAllByMember(Member member) {
+		List<PostResponse> responses = postRepository.findByMemberIdJoinFetch(member.getId()).stream()
+			.map(PostResponse::from)
+			.toList();
+		return ResponseEntity.status(HttpStatus.OK)
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(responses);
+	}
+
+	@Override
+	public ResponseEntity<PostResponse> update(Long postId, UpdatePostRequest updatePostRequest) {
+		Post post = postRepository.findByIdJoinFetch(postId)
+			.orElseThrow(() -> new EntityNotFoundException("[Error] 게시글을 찾을 수 없습니다."));
+		post.updateContent(updatePostRequest.getContent());
+		postRepository.save(post);
+		return ResponseEntity.status(HttpStatus.OK)
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(PostResponse.from(post));
+	}
+
+	@Override
+	public ResponseEntity<PostResponse> update(Long postId, PostImage postImage) {
+		Post post = postRepository.findByIdJoinFetch(postId)
+			.orElseThrow(() -> new EntityNotFoundException("[Error] 게시글을 찾을 수 없습니다."));
+		post.updatePostImage(postImage);
+		postRepository.save(post);
+		return ResponseEntity.status(HttpStatus.OK)
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(PostResponse.from(post));
+	}
+
+	@Override
+	public ResponseEntity<Void> delete(Long postId) {
+		boolean isExistPost = postRepository.existsById(postId);
+		if (!isExistPost) {
+			throw new EntityNotFoundException("[Error] 게시글을 찾을 수 없습니다.");
+		}
+		postRepository.deleteById(postId);
+		return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+	}
+
+	@Override
+	public ResponseEntity<List<PostResponse>> getFeed(String followerId, Long cursor) {
+		PageRequest pageRequest = PageRequest.of(0, DEFAULT_PAGE__SIZE);
+		List<Member> followings = followRepository.findByFollowerId(followerId).stream()
+			.map(Follow::getFollowing)
+			.toList();
+		Slice<Post> posts = getAllPostsByMembers(followings, cursor, pageRequest);
+		List<PostResponse> responses = posts.stream()
+			.map(PostResponse::from)
+			.toList();
+		return ResponseEntity.status(HttpStatus.OK)
+			.contentType(MediaType.APPLICATION_JSON)
+			.body(responses);
+	}
+
+	private Slice<Post> getAllPosts(PageRequest pageRequest, Long cursor) {
+		if (cursor == 0) {
+			return postRepository.findAll(pageRequest);
+		}
+		return postRepository.findNextPage(cursor, pageRequest);
+	}
+
+	private Slice<Post> getAllPostsByMembers(List<Member> members, Long cursor, PageRequest pageRequest) {
+		if (cursor == 0) {
+			return postRepository.findByMemberIdIn(pageRequest, members);
+		}
+		return postRepository.findByMemberIdIn(cursor, pageRequest, members);
+	}
+}
